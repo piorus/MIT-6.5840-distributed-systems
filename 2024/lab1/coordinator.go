@@ -1,6 +1,8 @@
 package mr
 
 import (
+	"errors"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -9,11 +11,43 @@ import (
 )
 
 type Coordinator struct {
-	// Your definitions here.
+	tasks []Task
+}
 
+type Task struct {
+	Id        int
+	Filename  string
+	Scheduled bool
+	Done      bool
 }
 
 // Your code here -- RPC handlers for the worker to call.
+
+func (c *Coordinator) GetTask(args *GetTaskArgs, reply *GetTaskReply) error {
+	for _, task := range c.tasks {
+		if !task.Scheduled && !task.Done {
+			task.Scheduled = true
+			reply.Task = task
+
+			return nil
+		}
+	}
+
+	return errors.New("no more tasks")
+}
+
+func (c *Coordinator) NotifyAboutTaskCompletion(args *NotifyAboutTaskCompletionArgs, reply NotifyAboutTaskCompletionReply) error {
+	for _, task := range c.tasks {
+		if task.Id == args.Task.Id {
+			task.Done = true
+			reply.ack = true
+
+			return nil
+		}
+	}
+
+	return fmt.Errorf("task %d not found", args.Task.Id)
+}
 
 // an example RPC handler.
 //
@@ -40,21 +74,26 @@ func (c *Coordinator) server() {
 // main/mrcoordinator.go calls Done() periodically to find out
 // if the entire job has finished.
 func (c *Coordinator) Done() bool {
-	ret := false
+	for _, task := range c.tasks {
+		if !task.Done {
+			return false
+		}
+	}
 
-	// Your code here.
-
-	return ret
+	return true
 }
 
 // create a Coordinator.
 // main/mrcoordinator.go calls this function.
 // nReduce is the number of reduce tasks to use.
 func MakeCoordinator(files []string, nReduce int) *Coordinator {
-	c := Coordinator{}
+	var tasks []Task
 
-	// Your code here.
+	for id, filename := range files[2:] {
+		tasks = append(tasks, Task{Id: id, Filename: filename})
+	}
 
+	c := Coordinator{tasks: tasks}
 	c.server()
 	return &c
 }

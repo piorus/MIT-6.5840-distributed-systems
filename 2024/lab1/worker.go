@@ -22,14 +22,23 @@ func ihash(key string) int {
 }
 
 // main/mrworker.go calls this function.
-func Worker(mapf func(string, string) []KeyValue,
-	reducef func(string, []string) string) {
+func Worker(mapf func(string, string) []KeyValue, reducef func(string, []string) string) {
+	// call GetTask in a loop until error happens
 
-	// Your worker implementation here.
+	for {
+		args := GetTaskArgs{}
+		reply := GetTaskReply{}
 
-	// uncomment to send the Example RPC to the coordinator.
-	// CallExample()
+		ok := call("Coordinator.GetTask", &args, &reply)
 
+		if ok {
+			fmt.Println("GetTaskReply.task = %+v", reply.Task)
+		} else {
+			fmt.Printf("call failed\n")
+		}
+	}
+
+	// call NotifyAboutTaskCompletion when intermediate results are processed
 }
 
 // example function to show how to make an RPC call to the coordinator.
