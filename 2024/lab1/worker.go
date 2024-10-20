@@ -1,10 +1,13 @@
 package mr
 
 import (
+	"errors"
 	"fmt"
 	"hash/fnv"
+	"io/ioutil"
 	"log"
 	"net/rpc"
+	"os"
 )
 
 // Map functions return a slice of KeyValue.
@@ -23,49 +26,82 @@ func ihash(key string) int {
 
 // main/mrworker.go calls this function.
 func Worker(mapf func(string, string) []KeyValue, reducef func(string, []string) string) {
-	// call GetTask in a loop until error happens
-
 	for {
-		args := GetTaskArgs{}
-		reply := GetTaskReply{}
+		task, err := CallGetTask()
 
-		ok := call("Coordinator.GetTask", &args, &reply)
-
-		if ok {
-			fmt.Println("GetTaskReply.task = %+v", reply.Task)
-		} else {
-			fmt.Printf("call failed\n")
+		if err != nil {
+			fmt.Println("no more tasks")
+			break
 		}
-	}
 
-	// call NotifyAboutTaskCompletion when intermediate results are processed
+		ProcessTask(task, mapf, reducef)
+
+		CallNotifyAboutTaskCompletion(task)
+	}
 }
 
-// example function to show how to make an RPC call to the coordinator.
-//
-// the RPC argument and reply types are defined in rpc.go.
-func CallExample() {
+func CallGetTask() (Task, error) {
+	args := GetTaskArgs{}
+	reply := GetTaskReply{}
+	var err error
 
-	// declare an argument structure.
-	args := ExampleArgs{}
+	ok := call("Coordinator.GetTask", &args, &reply)
 
-	// fill in the argument(s).
-	args.X = 99
-
-	// declare a reply structure.
-	reply := ExampleReply{}
-
-	// send the RPC request, wait for the reply.
-	// the "Coordinator.Example" tells the
-	// receiving server that we'd like to call
-	// the Example() method of struct Coordinator.
-	ok := call("Coordinator.Example", &args, &reply)
-	if ok {
-		// reply.Y should be 100.
-		fmt.Printf("reply.Y %v\n", reply.Y)
-	} else {
-		fmt.Printf("call failed!\n")
+	if !ok {
+		err = errors.New("no more tasks")
 	}
+
+	return reply.Task, err
+}
+
+func CallNotifyAboutTaskCompletion(task Task) {
+	args := NotifyAboutTaskCompletionArgs{Task: task}
+	reply := NotifyAboutTaskCompletionReply{}
+	ok := call("Coordinator.NotifyAboutTaskCompletion", &args, &reply)
+
+	if !ok {
+		fmt.Println("Something went wrong during NotifyAboutTaskCompletion")
+	}
+}
+
+func ProcessTask(task Task, mapf func(string, string) []KeyValue, reducef func(string, []string) string) {
+	intermediate := []KeyValue{}
+
+	for _, filename := range task.Filenames {
+		file, err := os.Open(filename)
+		if err != nil {
+			log.Fatalf("cannot open %v", filename)
+		}
+		content, err := ioutil.ReadAll(file)
+		if err != nil {
+			log.Fatalf("cannot read %v", filename)
+		}
+		file.Close()
+		kva := mapf(filename, string(content))
+		intermediate = append(intermediate, kva...)
+	}
+
+	oname := fmt.Sprintf("mr-out-%d", task.Id)
+	ofile, _ := os.Create(oname)
+
+	i := 0
+	for i < len(intermediate) {
+		j := i + 1
+		for j < len(intermediate) && intermediate[j].Key == intermediate[i].Key {
+			j++
+		}
+		values := []string{}
+		for k := i; k < j; k++ {
+			values = append(values, intermediate[k].Value)
+		}
+		output := reducef(intermediate[i].Key, values)
+
+		fmt.Fprintf(ofile, "%v %v\n", intermediate[i].Key, output)
+
+		i = j
+	}
+
+	ofile.Close()
 }
 
 // send an RPC request to the coordinator, wait for the response.

@@ -1,33 +1,11 @@
 package mr
 
-//
-// RPC definitions.
-//
-// remember to capitalize all names.
-//
-
 import (
 	"os"
 	"strconv"
 )
 
-//
-// example to show how to declare the arguments
-// and reply for an RPC.
-//
-
-type ExampleArgs struct {
-	X int
-}
-
-type ExampleReply struct {
-	Y int
-}
-
-// Add your RPC definitions here.
-
 type GetTaskArgs struct {
-	Worker int
 }
 
 type GetTaskReply struct {
@@ -39,7 +17,7 @@ type NotifyAboutTaskCompletionArgs struct {
 }
 
 type NotifyAboutTaskCompletionReply struct {
-	ack bool
+	Ack bool
 }
 
 // Cook up a unique-ish UNIX-domain socket name

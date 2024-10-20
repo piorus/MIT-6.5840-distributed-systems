@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"net"
 	"net/http"
 	"net/rpc"
@@ -16,7 +17,7 @@ type Coordinator struct {
 
 type Task struct {
 	Id        int
-	Filename  string
+	Filenames []string
 	Scheduled bool
 	Done      bool
 }
@@ -36,11 +37,12 @@ func (c *Coordinator) GetTask(args *GetTaskArgs, reply *GetTaskReply) error {
 	return errors.New("no more tasks")
 }
 
-func (c *Coordinator) NotifyAboutTaskCompletion(args *NotifyAboutTaskCompletionArgs, reply NotifyAboutTaskCompletionReply) error {
-	for _, task := range c.tasks {
+func (c *Coordinator) NotifyAboutTaskCompletion(args *NotifyAboutTaskCompletionArgs, reply *NotifyAboutTaskCompletionReply) error {
+	for i := 0; i < len(c.tasks); i++ {
+		task := &c.tasks[i]
 		if task.Id == args.Task.Id {
 			task.Done = true
-			reply.ack = true
+			reply.Ack = true
 
 			return nil
 		}
@@ -87,10 +89,15 @@ func (c *Coordinator) Done() bool {
 // main/mrcoordinator.go calls this function.
 // nReduce is the number of reduce tasks to use.
 func MakeCoordinator(files []string, nReduce int) *Coordinator {
-	var tasks []Task
+	if nReduce < 1 {
+		panic("nReduce must be greater than 0")
+	}
 
-	for id, filename := range files[2:] {
-		tasks = append(tasks, Task{Id: id, Filename: filename})
+	var tasks []Task
+	chunkSize := int(math.Ceil(float64(len(files)) / float64(nReduce)))
+
+	for i := 0; i < len(files); i += chunkSize {
+		tasks = append(tasks, Task{Id: i, Filenames: files[i : i+chunkSize]})
 	}
 
 	c := Coordinator{tasks: tasks}
