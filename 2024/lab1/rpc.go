@@ -12,11 +12,12 @@ type GetTaskReply struct {
 	Task Task
 }
 
-type NotifyAboutTaskCompletionArgs struct {
-	Task Task
+type CompleteTaskArgs struct {
+	Task                  Task
+	IntermediateFilenames []string
 }
 
-type NotifyAboutTaskCompletionReply struct {
+type CompleteTaskReply struct {
 	Ack bool
 }
 

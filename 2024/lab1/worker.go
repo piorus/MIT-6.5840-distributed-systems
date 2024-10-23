@@ -1,6 +1,7 @@
 package mr
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"hash/fnv"
@@ -27,45 +28,51 @@ func ihash(key string) int {
 // main/mrworker.go calls this function.
 func Worker(mapf func(string, string) []KeyValue, reducef func(string, []string) string) {
 	for {
-		task, err := CallGetTask()
+		if task, err := RpcGetTask(); err == nil {
+			if task.Type == MapTask {
+				Map(task, mapf)
+			}
 
-		if err != nil {
-			fmt.Println("no more tasks")
+			if task.Type == MapTask {
+				Reduce(task, reducef)
+			}
+
+			RpcCompleteTask(task)
+		} else {
 			break
 		}
-
-		ProcessTask(task, mapf, reducef)
-
-		CallNotifyAboutTaskCompletion(task)
 	}
 }
 
-func CallGetTask() (Task, error) {
+func RpcGetTask() (Task, error) {
 	args := GetTaskArgs{}
 	reply := GetTaskReply{}
-	var err error
 
-	ok := call("Coordinator.GetTask", &args, &reply)
-
-	if !ok {
-		err = errors.New("no more tasks")
+	if !call("Coordinator.GetTask", &args, &reply) {
+		return reply.Task, errors.New("no more tasks")
 	}
 
-	return reply.Task, err
+	return reply.Task, nil
 }
 
-func CallNotifyAboutTaskCompletion(task Task) {
-	args := NotifyAboutTaskCompletionArgs{Task: task}
-	reply := NotifyAboutTaskCompletionReply{}
-	ok := call("Coordinator.NotifyAboutTaskCompletion", &args, &reply)
+func RpcCompleteTask(task Task) {
+	args := CompleteTaskArgs{Task: task}
+	reply := CompleteTaskReply{}
+	ok := call("Coordinator.CompleteTask", &args, &reply)
 
 	if !ok {
-		fmt.Println("Something went wrong during NotifyAboutTaskCompletion")
+		fmt.Println("Something went wrong during CompleteTask")
 	}
 }
 
-func ProcessTask(task Task, mapf func(string, string) []KeyValue, reducef func(string, []string) string) {
-	intermediate := []KeyValue{}
+func Map(task Task, mapf func(string, string) []KeyValue) {
+	// read file
+	// mapf
+	// iterate over kv, build a map indexed by reduce task id (ihash(key) % nReduce) with kv
+	// iterate over map, write intermediate file mr-{task.Id}-{map index}
+
+	ofile, _ := os.Create(fmt.Sprintf("mr-, a ...any))
+	enc := json.NewEncoder()
 
 	for _, filename := range task.Filenames {
 		file, err := os.Open(filename)
@@ -78,9 +85,23 @@ func ProcessTask(task Task, mapf func(string, string) []KeyValue, reducef func(s
 		}
 		file.Close()
 		kva := mapf(filename, string(content))
-		intermediate = append(intermediate, kva...)
+		
+
+		for _, kv := range kva {
+
+		}
+
+
+
+
 	}
 
+	// sort
+
+	// save to file
+}
+
+func Reduce(task Task, reducef func(string, []string) string) {
 	oname := fmt.Sprintf("mr-out-%d", task.Id)
 	ofile, _ := os.Create(oname)
 
@@ -102,6 +123,7 @@ func ProcessTask(task Task, mapf func(string, string) []KeyValue, reducef func(s
 	}
 
 	ofile.Close()
+
 }
 
 // send an RPC request to the coordinator, wait for the response.

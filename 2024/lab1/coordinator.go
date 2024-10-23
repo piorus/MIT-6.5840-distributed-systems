@@ -4,30 +4,127 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"math"
 	"net"
 	"net/http"
 	"net/rpc"
 	"os"
+	"sync"
+	"time"
 )
 
 type Coordinator struct {
 	tasks []Task
+	mutex sync.Mutex
 }
 
-type Task struct {
-	Id        int
-	Filenames []string
-	Scheduled bool
-	Done      bool
+type TaskType int
+
+const (
+	UnknownTaskType TaskType = iota
+	MapTaskType
+	ReduceTaskType
+	//SleepTaskType
+)
+
+type Task interface {
+	Schedule()
+	Reschedule()
+	Complete()
+	Id() int
+	Type() TaskType
+	Equals(task Task) bool
+	IsScheduled() bool
+	IsCompleted() bool
 }
 
-// Your code here -- RPC handlers for the worker to call.
+type BaseTask struct {
+	id        int
+	scheduled bool
+	completed bool
+}
+
+type MapTask struct {
+	BaseTask
+	Filename string
+	NReduce  int
+}
+
+type ReduceTask struct {
+	BaseTask
+}
+
+func (t BaseTask) Schedule() {
+	t.scheduled = true
+}
+
+func (t BaseTask) Reschedule() {
+	t.scheduled = false
+}
+
+func (t BaseTask) Complete() {
+	t.completed = true
+}
+
+func (t BaseTask) Id() int {
+	return t.id
+}
+
+func (t BaseTask) Type() TaskType {
+	return UnknownTaskType
+}
+
+func (t BaseTask) Equals(task Task) bool {
+	return t.Type() == task.Type() && t.Id() == task.Id()
+}
+
+func (t BaseTask) IsScheduled() bool {
+	return t.scheduled
+}
+
+func (t BaseTask) IsCompleted() bool {
+	return t.completed
+}
+
+func (t MapTask) Type() TaskType {
+	return MapTaskType
+}
+
+func (t ReduceTask) Type() TaskType {
+	return ReduceTaskType
+}
+
+func IsMappingComplete(tasks []Task) bool {
+	for _, task := range tasks {
+		if task.Type() == MapTaskType && !task.IsCompleted() {
+			return false
+		}
+	}
+
+	return true
+}
 
 func (c *Coordinator) GetTask(args *GetTaskArgs, reply *GetTaskReply) error {
-	for _, task := range c.tasks {
-		if !task.Scheduled && !task.Done {
-			task.Scheduled = true
+	for i, task := range c.tasks {
+		if task.Type() == MapTaskType && !task.IsCompleted() {
+			reply.Task = task
+
+			go func() {
+				time.Sleep(10 * time.Second)
+
+				if !task.IsCompleted() {
+					c.tasks[i].Reschedule()
+				}
+			}()
+
+			return nil
+		}
+
+		if task.Type() == ReduceTaskType && !task.IsCompleted() && !IsMappingComplete(c.tasks) {
+			// wait until mapping ends
+			time.Sleep(time.Second)
+
+			return c.GetTask(args, reply)
+		} else if task.Type() == ReduceTaskType && !task.IsCompleted() {
 			reply.Task = task
 
 			return nil
@@ -37,11 +134,15 @@ func (c *Coordinator) GetTask(args *GetTaskArgs, reply *GetTaskReply) error {
 	return errors.New("no more tasks")
 }
 
-func (c *Coordinator) NotifyAboutTaskCompletion(args *NotifyAboutTaskCompletionArgs, reply *NotifyAboutTaskCompletionReply) error {
+func (c *Coordinator) CompleteTask(args *CompleteTaskArgs, reply *CompleteTaskReply) error {
 	for i := 0; i < len(c.tasks); i++ {
-		task := &c.tasks[i]
-		if task.Id == args.Task.Id {
-			task.Done = true
+		task := c.tasks[i]
+
+		if task.Equals(args.Task) {
+			c.mutex.Lock()
+			c.tasks[i].Complete()
+			c.mutex.Unlock()
+
 			reply.Ack = true
 
 			return nil
@@ -51,15 +152,6 @@ func (c *Coordinator) NotifyAboutTaskCompletion(args *NotifyAboutTaskCompletionA
 	return fmt.Errorf("task %d not found", args.Task.Id)
 }
 
-// an example RPC handler.
-//
-// the RPC argument and reply types are defined in rpc.go.
-func (c *Coordinator) Example(args *ExampleArgs, reply *ExampleReply) error {
-	reply.Y = args.X + 1
-	return nil
-}
-
-// start a thread that listens for RPCs from worker.go
 func (c *Coordinator) server() {
 	rpc.Register(c)
 	rpc.HandleHTTP()
@@ -77,7 +169,7 @@ func (c *Coordinator) server() {
 // if the entire job has finished.
 func (c *Coordinator) Done() bool {
 	for _, task := range c.tasks {
-		if !task.Done {
+		if !task.IsCompleted() {
 			return false
 		}
 	}
@@ -94,10 +186,13 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 	}
 
 	var tasks []Task
-	chunkSize := int(math.Ceil(float64(len(files)) / float64(nReduce)))
 
-	for i := 0; i < len(files); i += chunkSize {
-		tasks = append(tasks, Task{Id: i, Filenames: files[i : i+chunkSize]})
+	for i, filename := range files {
+		tasks = append(tasks, MapTask{BaseTask: BaseTask{id: i}, Filename: filename, NReduce: nReduce})
+	}
+
+	for i := 0; i < nReduce; i++ {
+		tasks = append(tasks, ReduceTask{BaseTask: BaseTask{id: i}})
 	}
 
 	c := Coordinator{tasks: tasks}
