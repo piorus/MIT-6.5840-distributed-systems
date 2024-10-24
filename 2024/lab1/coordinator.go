@@ -1,6 +1,7 @@
 package mr
 
 import (
+	"encoding/gob"
 	"errors"
 	"fmt"
 	"log"
@@ -13,89 +14,80 @@ import (
 )
 
 type Coordinator struct {
-	tasks []Task
+	tasks []ITask
 	mutex sync.Mutex
 }
 
-type TaskType int
+type TaskType string
 
-const (
-	UnknownTaskType TaskType = iota
-	MapTaskType
-	ReduceTaskType
-	//SleepTaskType
-)
 
-type Task interface {
+type ITask interface {
 	Schedule()
 	Reschedule()
 	Complete()
-	Id() int
-	Type() TaskType
-	Equals(task Task) bool
+	GetId() int
+	Is(taskType TaskType) bool
+	Equals(task ITask) bool
 	IsScheduled() bool
 	IsCompleted() bool
 }
 
-type BaseTask struct {
-	id        int
-	scheduled bool
-	completed bool
+type Task struct {
+	Id        int
+	Type      TaskType
+	Scheduled bool
+	Completed bool
 }
 
 type MapTask struct {
-	BaseTask
+	Task
 	Filename string
 	NReduce  int
 }
 
+type IdleTask struct {
+	Task
+}
+
 type ReduceTask struct {
-	BaseTask
+	Task
 }
 
-func (t BaseTask) Schedule() {
-	t.scheduled = true
+func (t Task) Schedule() {
+	t.Scheduled = true
 }
 
-func (t BaseTask) Reschedule() {
-	t.scheduled = false
+func (t Task) Reschedule() {
+	t.Scheduled = false
 }
 
-func (t BaseTask) Complete() {
-	t.completed = true
+func (t Task) Complete() {
+	t.Completed = true
 }
 
-func (t BaseTask) Id() int {
-	return t.id
+func (t Task) GetId() int {
+	return t.Id
 }
 
-func (t BaseTask) Type() TaskType {
-	return UnknownTaskType
+func (t Task) Is(taskType TaskType) bool {
+	return t.Type == taskType
 }
 
-func (t BaseTask) Equals(task Task) bool {
-	return t.Type() == task.Type() && t.Id() == task.Id()
+func (t Task) Equals(task ITask) bool {
+	return task.Is(t.Type) && task.GetId() == t.Id
 }
 
-func (t BaseTask) IsScheduled() bool {
-	return t.scheduled
+func (t Task) IsScheduled() bool {
+	return t.Scheduled
 }
 
-func (t BaseTask) IsCompleted() bool {
-	return t.completed
+func (t Task) IsCompleted() bool {
+	return t.Completed
 }
 
-func (t MapTask) Type() TaskType {
-	return MapTaskType
-}
-
-func (t ReduceTask) Type() TaskType {
-	return ReduceTaskType
-}
-
-func IsMappingComplete(tasks []Task) bool {
+func IsMappingComplete(tasks []ITask) bool {
 	for _, task := range tasks {
-		if task.Type() == MapTaskType && !task.IsCompleted() {
+		if task.Is(Map) && !task.IsCompleted() {
 			return false
 		}
 	}
@@ -105,7 +97,7 @@ func IsMappingComplete(tasks []Task) bool {
 
 func (c *Coordinator) GetTask(args *GetTaskArgs, reply *GetTaskReply) error {
 	for i, task := range c.tasks {
-		if task.Type() == MapTaskType && !task.IsCompleted() {
+		if task.Is(Map) && !task.IsCompleted() {
 			reply.Task = task
 
 			go func() {
@@ -119,12 +111,12 @@ func (c *Coordinator) GetTask(args *GetTaskArgs, reply *GetTaskReply) error {
 			return nil
 		}
 
-		if task.Type() == ReduceTaskType && !task.IsCompleted() && !IsMappingComplete(c.tasks) {
+		if task.Is(Reduce) && !task.IsCompleted() && !IsMappingComplete(c.tasks) {
 			// wait until mapping ends
-			time.Sleep(time.Second)
+			reply.Task = IdleTask{Task: Task{Type: Idle}}
 
-			return c.GetTask(args, reply)
-		} else if task.Type() == ReduceTaskType && !task.IsCompleted() {
+			return nil
+		} else if task.Is(Reduce) && !task.IsCompleted() {
 			reply.Task = task
 
 			return nil
@@ -136,12 +128,10 @@ func (c *Coordinator) GetTask(args *GetTaskArgs, reply *GetTaskReply) error {
 
 func (c *Coordinator) CompleteTask(args *CompleteTaskArgs, reply *CompleteTaskReply) error {
 	for i := 0; i < len(c.tasks); i++ {
-		task := c.tasks[i]
-
-		if task.Equals(args.Task) {
-			c.mutex.Lock()
+		if c.tasks[i].Equals(args.Task) {
 			c.tasks[i].Complete()
-			c.mutex.Unlock()
+
+			fmt.Printf("Task completed: %+v\n", c.tasks[i])
 
 			reply.Ack = true
 
@@ -149,7 +139,7 @@ func (c *Coordinator) CompleteTask(args *CompleteTaskArgs, reply *CompleteTaskRe
 		}
 	}
 
-	return fmt.Errorf("task %d not found", args.Task.Id)
+	return fmt.Errorf("task %d not found", args.Task.GetId())
 }
 
 func (c *Coordinator) server() {
@@ -181,18 +171,22 @@ func (c *Coordinator) Done() bool {
 // main/mrcoordinator.go calls this function.
 // nReduce is the number of reduce tasks to use.
 func MakeCoordinator(files []string, nReduce int) *Coordinator {
+	gob.Register(MapTask{})
+	gob.Register(ReduceTask{})
+	gob.Register(IdleTask{})
+
 	if nReduce < 1 {
 		panic("nReduce must be greater than 0")
 	}
 
-	var tasks []Task
+	var tasks []ITask
 
 	for i, filename := range files {
-		tasks = append(tasks, MapTask{BaseTask: BaseTask{id: i}, Filename: filename, NReduce: nReduce})
+		tasks = append(tasks, MapTask{Task: Task{Id: i, Type: Map}, Filename: filename, NReduce: nReduce})
 	}
 
 	for i := 0; i < nReduce; i++ {
-		tasks = append(tasks, ReduceTask{BaseTask: BaseTask{id: i}})
+		tasks = append(tasks, ReduceTask{Task: Task{Id: i, Type: Reduce}})
 	}
 
 	c := Coordinator{tasks: tasks}

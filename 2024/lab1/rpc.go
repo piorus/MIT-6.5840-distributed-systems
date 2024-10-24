@@ -9,11 +9,11 @@ type GetTaskArgs struct {
 }
 
 type GetTaskReply struct {
-	Task Task
+	Task ITask
 }
 
 type CompleteTaskArgs struct {
-	Task                  Task
+	Task                  ITask
 	IntermediateFilenames []string
 }
 
