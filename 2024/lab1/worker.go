@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/rpc"
 	"os"
+	"path/filepath"
 	"sort"
 	"time"
 )
@@ -38,9 +39,9 @@ func ihash(key string) int {
 
 // main/mrworker.go calls this function.
 func Worker(mapf func(string, string) []KeyValue, reducef func(string, []string) string) {
-	gob.Register(MapTask{})
-	gob.Register(ReduceTask{})
-	gob.Register(IdleTask{})
+	gob.Register(&MapTask{})
+	gob.Register(&ReduceTask{})
+	gob.Register(&IdleTask{})
 
 	for {
 		if task, err := RpcGetTask(); err == nil {
@@ -84,7 +85,7 @@ func RpcCompleteTask(task ITask) {
 	ok := call("Coordinator.CompleteTask", &args, &reply)
 
 	if !ok {
-		fmt.Println("Something went wrong during ColeteTask")
+		fmt.Println("Something went wrong during CompleteTask")
 	}
 }
 
@@ -108,18 +109,76 @@ func HandleMap(task *MapTask, mapf func(string, string) []KeyValue) {
 	}
 
 	for reduceId, kva := range kvaMap {
-		out, _ := os.Create(fmt.Sprintf("mr-%d-%d", task.Id, reduceId))
-		enc := json.NewEncoder(out)
+		ofile, _ := os.OpenFile(fmt.Sprintf("mr-%d-%d", task.Id, reduceId), os.O_CREATE|os.O_WRONLY, 0644)
+		defer ofile.Close()
+		enc := json.NewEncoder(ofile)
 
 		sort.Sort(ByKey(kva))
 
 		for _, kv := range kva {
-			enc.Encode(&kv)
+			err := enc.Encode(&kv)
+
+			if err != nil {
+				panic(err)
+			}
 		}
 	}
 }
 
 func HandleReduce(task *ReduceTask, reducef func(string, []string) string) {
+	wd, err := os.Getwd()
+
+	if err != nil {
+		panic(err)
+	}
+
+	files, _ := filepath.Glob(fmt.Sprintf("%s/mr-[0-9]-%d", wd, task.GetId()))
+	var intermediate []KeyValue
+
+	for _, filename := range files {
+		file, err := os.Open(filename)
+		if err != nil {
+			log.Fatalf("cannot open %v", filename)
+		}
+		dec := json.NewDecoder(file)
+		for {
+			var kv KeyValue
+			if err := dec.Decode(&kv); err != nil {
+				break
+			}
+			intermediate = append(intermediate, kv)
+		}
+	}
+
+	sort.Sort(ByKey(intermediate))
+
+	oname := fmt.Sprintf("mr-out-%d", task.GetId())
+	ofile, _ := os.Create(oname)
+
+	//
+	// call Reduce on each distinct key in intermediate[],
+	// and print the result to mr-out-0.
+	//
+	i := 0
+	for i < len(intermediate) {
+		j := i + 1
+		for j < len(intermediate) && intermediate[j].Key == intermediate[i].Key {
+			j++
+		}
+		values := []string{}
+		for k := i; k < j; k++ {
+			values = append(values, intermediate[k].Value)
+		}
+		output := reducef(intermediate[i].Key, values)
+
+		// this is the correct format for each line of Reduce output.
+		fmt.Fprintf(ofile, "%v %v\n", intermediate[i].Key, output)
+
+		i = j
+	}
+
+	ofile.Close()
+
 }
 
 // send an RPC request to the coordinator, wait for the response.
@@ -139,6 +198,5 @@ func call(rpcname string, args interface{}, reply interface{}) bool {
 		return true
 	}
 
-	fmt.Println(err)
 	return false
 }

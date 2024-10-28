@@ -20,9 +20,10 @@ type Coordinator struct {
 
 type TaskType string
 
-const Unknown, Map, Reduce, Idle TaskType = "unknown", "map", "reduce", "idle"
+const Map, Reduce, Idle TaskType = "map", "reduce", "idle"
 
 type ITask interface {
+	Schedule()
 	Reschedule()
 	Complete()
 	GetId() int
@@ -96,8 +97,12 @@ func IsMappingComplete(tasks []ITask) bool {
 }
 
 func (c *Coordinator) GetTask(args *GetTaskArgs, reply *GetTaskReply) error {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+
 	for i, task := range c.tasks {
-		if task.Is(Map) && !task.IsCompleted() {
+		if task.Is(Map) && !task.IsCompleted() && !task.IsScheduled() {
+			c.tasks[i].Schedule()
 			reply.Task = task
 
 			go func() {
@@ -111,12 +116,12 @@ func (c *Coordinator) GetTask(args *GetTaskArgs, reply *GetTaskReply) error {
 			return nil
 		}
 
-		if task.Is(Reduce) && !task.IsCompleted() && !IsMappingComplete(c.tasks) {
+		if task.Is(Reduce) && !task.IsCompleted() && !task.IsScheduled() && !IsMappingComplete(c.tasks) {
 			// wait until mapping ends
 			reply.Task = &IdleTask{Task: Task{Type: Idle}}
 
 			return nil
-		} else if task.Is(Reduce) && !task.IsCompleted() {
+		} else if task.Is(Reduce) && !task.IsCompleted() && !task.IsScheduled() {
 			reply.Task = task
 
 			return nil
@@ -127,19 +132,23 @@ func (c *Coordinator) GetTask(args *GetTaskArgs, reply *GetTaskReply) error {
 }
 
 func (c *Coordinator) CompleteTask(args *CompleteTaskArgs, reply *CompleteTaskReply) error {
+	// we do not need to register end of idle tasks
+	if args.Task.Is(Idle) {
+		reply.Ack = true
+		return nil
+	}
+
 	for i := 0; i < len(c.tasks); i++ {
 		if c.tasks[i].Equals(args.Task) {
 			c.tasks[i].Complete()
-
-			fmt.Printf("Task completed: %+v\n", c.tasks[i])
-
+			//fmt.Printf("Task completed: %+v\n", c.tasks[i])
 			reply.Ack = true
 
 			return nil
 		}
 	}
 
-	return fmt.Errorf("task %d not found", args.Task.GetId())
+	return fmt.Errorf("task not found: %+v", args.Task)
 }
 
 func (c *Coordinator) server() {
@@ -171,9 +180,9 @@ func (c *Coordinator) Done() bool {
 // main/mrcoordinator.go calls this function.
 // nReduce is the number of reduce tasks to use.
 func MakeCoordinator(files []string, nReduce int) *Coordinator {
-	gob.Register(MapTask{})
-	gob.Register(ReduceTask{})
-	gob.Register(IdleTask{})
+	gob.Register(&MapTask{})
+	gob.Register(&ReduceTask{})
+	gob.Register(&IdleTask{})
 
 	if nReduce < 1 {
 		panic("nReduce must be greater than 0")
