@@ -44,15 +44,19 @@ func Worker(mapf func(string, string) []KeyValue, reducef func(string, []string)
 
 	for {
 		if task, err := RpcGetTask(); err == nil {
-			if task.Is(MapTaskType) {
-				HandleMap(task.(MapTask), mapf)
+			if task.Is(Map) {
+				if v, ok := task.(*MapTask); ok {
+					HandleMap(v, mapf)
+				}
 			}
 
-			if task.Is(ReduceTaskType) {
-				HandleReduce(task.(ReduceTask), reducef)
+			if task.Is(Reduce) {
+				if v, ok := task.(*ReduceTask); ok {
+					HandleReduce(v, reducef)
+				}
 			}
 
-			if task.Is(IdleTaskType) {
+			if task.Is(Idle) {
 				time.Sleep(time.Second)
 			}
 
@@ -84,7 +88,7 @@ func RpcCompleteTask(task ITask) {
 	}
 }
 
-func HandleMap(task MapTask, mapf func(string, string) []KeyValue) {
+func HandleMap(task *MapTask, mapf func(string, string) []KeyValue) {
 	file, err := os.Open(task.Filename)
 	if err != nil {
 		log.Fatalf("cannot open %v", task.Filename)
@@ -115,7 +119,7 @@ func HandleMap(task MapTask, mapf func(string, string) []KeyValue) {
 	}
 }
 
-func HandleReduce(task ReduceTask, reducef func(string, []string) string) {
+func HandleReduce(task *ReduceTask, reducef func(string, []string) string) {
 }
 
 // send an RPC request to the coordinator, wait for the response.

@@ -20,9 +20,9 @@ type Coordinator struct {
 
 type TaskType string
 
+const Unknown, Map, Reduce, Idle TaskType = "unknown", "map", "reduce", "idle"
 
 type ITask interface {
-	Schedule()
 	Reschedule()
 	Complete()
 	GetId() int
@@ -53,35 +53,35 @@ type ReduceTask struct {
 	Task
 }
 
-func (t Task) Schedule() {
+func (t *Task) Schedule() {
 	t.Scheduled = true
 }
 
-func (t Task) Reschedule() {
+func (t *Task) Reschedule() {
 	t.Scheduled = false
 }
 
-func (t Task) Complete() {
+func (t *Task) Complete() {
 	t.Completed = true
 }
 
-func (t Task) GetId() int {
+func (t *Task) GetId() int {
 	return t.Id
 }
 
-func (t Task) Is(taskType TaskType) bool {
+func (t *Task) Is(taskType TaskType) bool {
 	return t.Type == taskType
 }
 
-func (t Task) Equals(task ITask) bool {
+func (t *Task) Equals(task ITask) bool {
 	return task.Is(t.Type) && task.GetId() == t.Id
 }
 
-func (t Task) IsScheduled() bool {
+func (t *Task) IsScheduled() bool {
 	return t.Scheduled
 }
 
-func (t Task) IsCompleted() bool {
+func (t *Task) IsCompleted() bool {
 	return t.Completed
 }
 
@@ -113,7 +113,7 @@ func (c *Coordinator) GetTask(args *GetTaskArgs, reply *GetTaskReply) error {
 
 		if task.Is(Reduce) && !task.IsCompleted() && !IsMappingComplete(c.tasks) {
 			// wait until mapping ends
-			reply.Task = IdleTask{Task: Task{Type: Idle}}
+			reply.Task = &IdleTask{Task: Task{Type: Idle}}
 
 			return nil
 		} else if task.Is(Reduce) && !task.IsCompleted() {
@@ -182,11 +182,11 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 	var tasks []ITask
 
 	for i, filename := range files {
-		tasks = append(tasks, MapTask{Task: Task{Id: i, Type: Map}, Filename: filename, NReduce: nReduce})
+		tasks = append(tasks, &MapTask{Task: Task{Id: i, Type: Map}, Filename: filename, NReduce: nReduce})
 	}
 
 	for i := 0; i < nReduce; i++ {
-		tasks = append(tasks, ReduceTask{Task: Task{Id: i, Type: Reduce}})
+		tasks = append(tasks, &ReduceTask{Task: Task{Id: i, Type: Reduce}})
 	}
 
 	c := Coordinator{tasks: tasks}
