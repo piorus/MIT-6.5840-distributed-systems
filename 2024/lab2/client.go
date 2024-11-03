@@ -45,7 +45,7 @@ func MakeClerk(server *labrpc.ClientEnd) *Clerk {
 // must match the declared types of the RPC handler function's
 // arguments. and reply must be passed as a pointer.
 func (ck *Clerk) Get(key string) string {
-	args := GetArgs{Key: key, Id: ck.GenerateId(), ClientId: ck.clientId}
+	args := GetArgs{Key: key, ClientId: ck.clientId}
 	reply := GetReply{}
 
 	for {
@@ -53,18 +53,10 @@ func (ck *Clerk) Get(key string) string {
 		if ok {
 			break
 		}
-		time.Sleep(time.Second)
+		time.Sleep(500 * time.Millisecond)
 	}
 
 	return reply.Value
-}
-
-func (ck *Clerk) GenerateId() int {
-	ck.mu.Lock()
-	id := ck.lastId
-	ck.lastId += 1
-	ck.mu.Unlock()
-	return id
 }
 
 // shared by Put and Append.
@@ -76,15 +68,16 @@ func (ck *Clerk) GenerateId() int {
 // must match the declared types of the RPC handler function's
 // arguments. and reply must be passed as a pointer.
 func (ck *Clerk) PutAppend(key string, value string, op string) string {
-	args := PutAppendArgs{Key: key, Value: value, Id: ck.GenerateId(), ClientId: ck.clientId}
+	args := PutAppendArgs{Key: key, Value: value, ClientId: ck.clientId}
 	reply := PutAppendReply{}
 
 	for {
 		ok := ck.server.Call("KVServer."+op, &args, &reply)
 		if ok {
+			ck.server.Call("KVServer.Ack", &AckArgs{ClientId: ck.clientId}, &AckReply{})
 			break
 		}
-		time.Sleep(time.Second)
+		time.Sleep(500 * time.Millisecond)
 	}
 
 	return reply.Value

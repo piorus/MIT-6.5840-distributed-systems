@@ -14,15 +14,30 @@ func DPrintf(format string, a ...interface{}) (n int, err error) {
 	return
 }
 
-type ClientState struct {
-	PrevValue       string
-	LastProcessedId int
+type ClientTransaction struct {
+	id       int
+	clientId int
+	key      string
+	value    string
+	op       string
+}
+
+func (transaction *ClientTransaction) Commit(value *string) {
+	if transaction.op == "put" {
+		*value = transaction.value
+		return
+	}
+
+	if transaction.op == "append" {
+		*value = *value + transaction.value
+		return
+	}
 }
 
 type KVServer struct {
-	mu     sync.Mutex
-	values map[string]string
-	states map[int]ClientState
+	mu           sync.Mutex
+	values       map[string]string
+	transactions map[int]ClientTransaction
 }
 
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
@@ -30,51 +45,55 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	defer kv.mu.Unlock()
 
 	value, _ := kv.values[args.Key]
+
 	reply.Value = value
 }
 
 func (kv *KVServer) Put(args *PutAppendArgs, reply *PutAppendReply) {
-	kv.mu.Lock()
-	defer kv.mu.Unlock()
-
-	state, ok := kv.states[args.ClientId]
-
-	// bail early, avoid duplicates
-	if ok && state.LastProcessedId == args.Id {
-		reply.Value = state.PrevValue
-		return
-	}
-
-	prevValue, _ := kv.values[args.Key]
-	reply.Value = prevValue
-
-	kv.states[args.ClientId] = ClientState{PrevValue: prevValue, LastProcessedId: args.Id}
-	kv.values[args.Key] = args.Value
+	reply.Value = PutAppend(kv, &ClientTransaction{
+		op:       "put",
+		key:      args.Key,
+		value:    args.Value,
+		clientId: args.ClientId,
+	})
 }
 
 func (kv *KVServer) Append(args *PutAppendArgs, reply *PutAppendReply) {
+	reply.Value = PutAppend(kv, &ClientTransaction{
+		op:       "append",
+		key:      args.Key,
+		value:    args.Value,
+		clientId: args.ClientId,
+	})
+}
+
+func (kv *KVServer) Ack(args *AckArgs, reply *AckReply) {
 	kv.mu.Lock()
 	defer kv.mu.Unlock()
 
-	state, ok := kv.states[args.ClientId]
-
-	// bail early, avoid duplicates
-	if ok && state.LastProcessedId == args.Id {
-		reply.Value = state.PrevValue
-		return
+	transaction, ok := kv.transactions[args.ClientId]
+	if ok {
+		value, _ := kv.values[transaction.key]
+		transaction.Commit(&value)
+		kv.values[transaction.key] = value
+		kv.transactions[args.ClientId] = ClientTransaction{}
 	}
+}
 
-	prevValue, _ := kv.values[args.Key]
-	reply.Value = prevValue
+func PutAppend(kv *KVServer, transaction *ClientTransaction) string {
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
 
-	kv.states[args.ClientId] = ClientState{PrevValue: prevValue, LastProcessedId: args.Id}
-	kv.values[args.Key] = reply.Value + args.Value
+	value, _ := kv.values[transaction.key]
+	kv.transactions[transaction.clientId] = *transaction
+
+	return value
 }
 
 func StartKVServer() *KVServer {
 	kv := new(KVServer)
 	kv.values = make(map[string]string)
-	kv.states = make(map[int]ClientState)
+	kv.transactions = make(map[int]ClientTransaction)
 
 	return kv
 }

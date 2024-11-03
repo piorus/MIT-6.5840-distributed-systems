@@ -5,7 +5,6 @@ type PutAppendArgs struct {
 	Key      string
 	Value    string
 	ClientId int
-	Id       int
 }
 
 type PutAppendReply struct {
@@ -15,9 +14,15 @@ type PutAppendReply struct {
 type GetArgs struct {
 	Key      string
 	ClientId int
-	Id       int
 }
 
 type GetReply struct {
 	Value string
+}
+
+type AckArgs struct {
+	ClientId int
+}
+
+type AckReply struct {
 }
