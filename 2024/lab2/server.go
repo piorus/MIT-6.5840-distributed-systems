@@ -2,6 +2,7 @@ package kvsrv
 
 import (
 	"log"
+	"strings"
 	"sync"
 )
 
@@ -18,26 +19,26 @@ type ClientTransaction struct {
 	id       int
 	clientId int
 	key      string
-	value    string
+	value    *string
 	op       string
 }
 
-func (transaction *ClientTransaction) Commit(value *string) {
+func (transaction *ClientTransaction) Commit(value *string) string {
 	if transaction.op == "put" {
-		*value = transaction.value
-		return
+		return *transaction.value
 	}
 
 	if transaction.op == "append" {
-		*value = *value + transaction.value
-		return
+		return *value + *transaction.value
 	}
+
+	return ""
 }
 
 type KVServer struct {
-	mu           sync.Mutex
-	values       map[string]string
-	transactions map[int]ClientTransaction
+	mu                 sync.Mutex
+	values             map[string]string
+	transactionHistory map[int]int
 }
 
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
@@ -45,7 +46,6 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	defer kv.mu.Unlock()
 
 	value, _ := kv.values[args.Key]
-
 	reply.Value = value
 }
 
@@ -53,7 +53,8 @@ func (kv *KVServer) Put(args *PutAppendArgs, reply *PutAppendReply) {
 	reply.Value = PutAppend(kv, &ClientTransaction{
 		op:       "put",
 		key:      args.Key,
-		value:    args.Value,
+		value:    &args.Value,
+		id:       args.Id,
 		clientId: args.ClientId,
 	})
 }
@@ -62,30 +63,25 @@ func (kv *KVServer) Append(args *PutAppendArgs, reply *PutAppendReply) {
 	reply.Value = PutAppend(kv, &ClientTransaction{
 		op:       "append",
 		key:      args.Key,
-		value:    args.Value,
+		value:    &args.Value,
+		id:       args.Id,
 		clientId: args.ClientId,
 	})
-}
-
-func (kv *KVServer) Ack(args *AckArgs, reply *AckReply) {
-	kv.mu.Lock()
-	defer kv.mu.Unlock()
-
-	transaction, ok := kv.transactions[args.ClientId]
-	if ok {
-		value, _ := kv.values[transaction.key]
-		transaction.Commit(&value)
-		kv.values[transaction.key] = value
-		kv.transactions[args.ClientId] = ClientTransaction{}
-	}
 }
 
 func PutAppend(kv *KVServer, transaction *ClientTransaction) string {
 	kv.mu.Lock()
 	defer kv.mu.Unlock()
 
+	prevTransactionId, _ := kv.transactionHistory[transaction.clientId]
 	value, _ := kv.values[transaction.key]
-	kv.transactions[transaction.clientId] = *transaction
+
+	if prevTransactionId == transaction.id {
+		return strings.Replace(value, *transaction.value, "", 1)
+	}
+
+	kv.transactionHistory[transaction.clientId] = transaction.id
+	kv.values[transaction.key] = transaction.Commit(&value)
 
 	return value
 }
@@ -93,7 +89,7 @@ func PutAppend(kv *KVServer, transaction *ClientTransaction) string {
 func StartKVServer() *KVServer {
 	kv := new(KVServer)
 	kv.values = make(map[string]string)
-	kv.transactions = make(map[int]ClientTransaction)
+	kv.transactionHistory = make(map[int]int)
 
 	return kv
 }

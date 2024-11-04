@@ -4,6 +4,7 @@ package kvsrv
 type PutAppendArgs struct {
 	Key      string
 	Value    string
+	Id       int
 	ClientId int
 }
 

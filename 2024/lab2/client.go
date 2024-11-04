@@ -4,7 +4,6 @@ import (
 	"crypto/rand"
 	"math/big"
 	"sync"
-	"time"
 
 	"6.5840/labrpc"
 )
@@ -26,10 +25,7 @@ func nrand() int64 {
 func MakeClerk(server *labrpc.ClientEnd) *Clerk {
 	ck := new(Clerk)
 	ck.server = server
-
-	max := big.NewInt(int64(1) << 62)
-	bigx, _ := rand.Int(rand.Reader, max)
-	ck.clientId = int(bigx.Int64())
+	ck.clientId = int(nrand())
 
 	return ck
 }
@@ -53,7 +49,6 @@ func (ck *Clerk) Get(key string) string {
 		if ok {
 			break
 		}
-		time.Sleep(500 * time.Millisecond)
 	}
 
 	return reply.Value
@@ -68,16 +63,14 @@ func (ck *Clerk) Get(key string) string {
 // must match the declared types of the RPC handler function's
 // arguments. and reply must be passed as a pointer.
 func (ck *Clerk) PutAppend(key string, value string, op string) string {
-	args := PutAppendArgs{Key: key, Value: value, ClientId: ck.clientId}
+	args := PutAppendArgs{Key: key, Value: value, Id: int(nrand()), ClientId: ck.clientId}
 	reply := PutAppendReply{}
 
 	for {
 		ok := ck.server.Call("KVServer."+op, &args, &reply)
 		if ok {
-			ck.server.Call("KVServer.Ack", &AckArgs{ClientId: ck.clientId}, &AckReply{})
 			break
 		}
-		time.Sleep(500 * time.Millisecond)
 	}
 
 	return reply.Value
